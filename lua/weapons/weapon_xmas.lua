@@ -24,7 +24,7 @@ SWEP.Purpose        	= "";
 SWEP.Spawnable      	= true;
 SWEP.AdminSpawnable 	= true;
 
-SWEP.Slot			= 5;
+SWEP.Slot		= 5;
 SWEP.SlotPos		= 7;
 SWEP.ViewModelFOV	= 70;
 
@@ -34,11 +34,11 @@ SWEP.WorldModel	= "models/weapons/w_grenade.mdl";
 SWEP.ShowViewModel	= true;
 SWEP.ShowWorldModel	= true;
 
-SWEP.Primary.Delay			= -1;
+SWEP.Primary.Delay		= -1;
 SWEP.Primary.ClipSize		= -1;
 SWEP.Primary.DefaultClip	= -1;
 SWEP.Primary.Automatic		= false;
-SWEP.Primary.Ammo			= "none";
+SWEP.Primary.Ammo		= "none";
 
 SWEP.Secondary.Delay		= -1;
 SWEP.Secondary.ClipSize		= -1;
