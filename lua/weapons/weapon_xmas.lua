@@ -145,10 +145,10 @@ function SWEP:Think()
 
 			if ( Light and Light.Sprite ) then 
 
-				local Pulse	= 0.2 - math.abs( math.sin( CurTime() ) * 0.2 );
+				local Pulse		= 0.2 - math.abs( math.sin( CurTime() ) * 0.2 );
 				local ColHue	= 360 * ( Step * Index ); 
 				local HueAdd	= 60 * CurTime();
-				local Color	= HSVToColor( ( ColHue + HueAdd ) % 360, 0.7 + Pulse, 1 );
+				local Color		= HSVToColor( ( ColHue + HueAdd ) % 360, 0.7 + Pulse, 1 );
 				local R, G, B	= Color.r, Color.g, Color.b;
 				local String	= string.format( "%s %s %s", R, G, B );
 
@@ -170,9 +170,9 @@ function SWEP:CreateLight()
 	-- Did the light we just created even exist or did the creation fail ? :c --
 	if ( IsValid( Light ) ) then 
 
-		local Sound	= Sound( table.Random( self.Sounds ) );
+		local Sound		= Sound( table.Random( self.Sounds ) );
 		local Lights	= self.Owner.Lights;
-		local Count	= #Lights;
+		local Count		= #Lights;
 
 		-- Setting the light --
 		Light:SetModel( "models/maxofs2d/light_tubular.mdl" );
@@ -274,7 +274,7 @@ function SWEP:PrimaryAttack()
 	if ( self.Owner and self.Owner.Lights ) then 
 
 		local Lights	= self.Owner.Lights;
-		local Count	= #Lights;
+		local Count		= #Lights;
 		local MaxLights	= self.LightsLimit:GetInt();
 
 		if ( Count < MaxLights or MaxLights == 0 ) then 
@@ -309,14 +309,10 @@ function SWEP:SecondaryAttack()
 
 			constraint.RemoveAll( Light );
 			Light:Remove();
-			table.remove( self.Owner.Lights, Count );
-
-		else
-
-			-- Remember that our light is somewhere in the void since it's not valid soo.... let's just delete it from the table ? --
-			table.remove( self.Owner.Lights, Count );
 
 		end
+
+		table.remove( self.Owner.Lights, Count );
 
 	end
 
@@ -332,13 +328,10 @@ function SWEP:Reload()
 
 				constraint.RemoveAll( Light );
 				Light:Remove();
-				table.remove( self.Owner.Lights, Index );
-
-			else
-
-				table.remove( self.Owner.Lights, Index );
 
 			end
+
+			table.remove( self.Owner.Lights, Index );
 
 		end
 
