@@ -188,7 +188,7 @@ function SWEP:CreateLight()
 		if ( IsValid( Phys ) ) then 
 
 			--[[-------------------------------------------------------------------------
-			Yes 50kg tubular light i get it it's kinda retarded but who gives a shit lol
+			Yes 25kg tubular light i get it it's kinda retarded but who gives a shit lol
 			like you are playing garry's mod, what the hell is your problem jesus christ.
 
 			Btw drag coefficient is modified to prevent ropes from making the lights go wild.
