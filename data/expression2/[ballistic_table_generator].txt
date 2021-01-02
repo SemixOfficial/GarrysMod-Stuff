@@ -1,7 +1,7 @@
 @name [Ballistic Table Generator]
 @inputs [Gun]:entity
-@outputs [Ballistics]:table
-@persist [HasBallisticTable, IsGenerating, HighestHoloIndex, ACF_DragDivisor]:normal [Globals, Bullet]:table
+@outputs [Ballistics]:table [IsGenerating, HasBallisticTable]:number
+@persist [HighestHoloIndex, ACF_DragDivisor]:normal [Globals, Bullet]:table
 
 #[[
     Hello, my name is BlacK and you are reading the source code of my autistic ballistic table generator,
@@ -52,7 +52,12 @@
     You can also visit [https://github.com/nrlulz/ACF/tree/master/lua/acf/shared/rounds] for a list of all official shell types.
     
     
-    Now to teach you a bit on how to use this, first you will need this beautiful function.
+    Now to teach you a bit on how to use this, first you will need this beautiful function (Credits: Fox, Soloman)
+    
+    To add it simply copy and paste it into your FCS/Turret aiming chip, to be specific
+    paste it into if (first() | dupefinished()) statement, you will also want to add input to your chip
+    you can call this inupt anything you desire, I called mine Ballistics, keep in mind that if you do
+    choose a different name, you will have to edit this function otherwise it won't work.
  
     function vector2 getBallisticData(Distance:number)
     {
@@ -72,29 +77,19 @@
     local BallisticData = getBallisticData(DistanceToTarget)
     local BulletVelocity = BallisticData:x()
     local BulletDrop = vec(0, 0, BallisticData:y())
+    
+    
+    P.S: Some people have been asking me why I open sourced this, to be honest I don't know, 
+    I just thought it'd be cool to share something that people around me have wanted for a while.
 ]]#
 
-if (first() | dupefinished())
+# This line of code is straight up disgusting... #
+if ((first() | dupefinished() | ->Gun | changed(Gun:acfMuzzleVel()) & Gun:acfMuzzleVel() != 0) & Gun:isValid() & Gun:acfIsGun())
 {
-    #[[
-    Okay so in ACF source code sv_gravity:GetInt() is used to get the force of gravity, however
-    Expression2's convarnum() function might be returning results of GetFloat() or GetDouble().
-
-    What I'm trying to say here is that this will work as long as you are not playing on autistic server
-    where for whatever reason the server operator decided to set Gravity to something like 600.99876464.
-    ]]#
-
     IsGenerating = 0
     HasBallisticTable = 0
     HighestHoloIndex = 0
     UNITS_TO_METERS = 39.37
-
-    #[[
-    Okay so here it is, as stated in Issue 0002, this table contains all frontal area divisors
-    that I could find, it contains even some extra ammo types that I found on ACF servers.
-    
-    TODO: This is so fucking disgusting I hope I'm never gonna have to write E2 for ACF again.
-    ]]#
     FrontalAreaDivisors = table()
     FrontalAreaDivisors["APDS", number]     = 20000
     FrontalAreaDivisors["APFSDS", number]   = 60000
@@ -131,12 +126,14 @@ if (first() | dupefinished())
     {
         IsGenerating = 1
         HasBallisticTable = 0
+        Ballistics:clear()
     }
 
     function void finishGeneration()
     {
         IsGenerating = 0
         HasBallisticTable = 1
+        runOnTick(0)
     }
 
     function void progressGeneration()
@@ -152,6 +149,7 @@ if (first() | dupefinished())
             #debugHolo(Gun:attachmentPos("muzzle") + Origin, "models/holograms/cube.mdl", 1, vec4(0, 0, 255, 127))   
         }
 
+        # TODO: This is bad, at least pre-cache the vector!
         if (vec(0, 1, 0):dot(Velocity:normalized()) <= 0.9)
         {
             finishGeneration()   
@@ -168,7 +166,7 @@ if (tickClk())
 {
     if (!IsGenerating & !HasBallisticTable)
     {
-        IsGenerating = 1
+        beginGeneration()
     }
     elseif (IsGenerating)
     {
@@ -178,3 +176,4 @@ if (tickClk())
         }
     }
 }
+
