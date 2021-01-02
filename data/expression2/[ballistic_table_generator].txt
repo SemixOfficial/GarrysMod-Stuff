@@ -1,0 +1,180 @@
+@name [Ballistic Table Generator]
+@inputs [Gun]:entity
+@outputs [Ballistics]:table
+@persist [HasBallisticTable, IsGenerating, HighestHoloIndex, ACF_DragDivisor]:normal [Globals, Bullet]:table
+
+#[[
+    Hello, my name is BlacK and you are reading the source code of my autistic ballistic table generator,
+    before I go any further I would like to elaborate on few things, issues, why they exist, and laslty
+    what we can possibly do about them.
+    
+    
+    
+    Issue 0001 - The ACF bullet simulation 
+    
+    In it's current state, ACF bullet simulation uses a variable called SysTime stored in the global table of ACF
+    this variable is updated on every tick and can be found on line 243 in lua/autorun/acf_globals.lua
+    Visit [https://github.com/nrlulz/ACF/blob/master/lua/autorun/acf_globals.lua#L243] for more info.
+    
+    ACF then uses this variable to determine how much time has passed since the last simulation step
+    the bullet is then simulated up to the current time using the time between last simulation step and the current time
+    as the delta time, while this sounds completely okay, it actually causes small discrepencies in the bullet's trajectory,
+    when simulating the physics the delta time should always be a static number, that way the simulation would give same
+    exact result every time, which is what we want and what's correct, sadly unless ACF developers decide to fix or
+    recode the bullet flight simulation we are stuck with this messy simulation, thankfully for us the delta time 
+    is or should always be somewhat same or close to server's tick interval or one divided by the current tickrate, the problem 
+    is that if the server fails to process the tick in time or simply processes it in different way the bullet trajectory
+    will change, the magnitude of this change then depends on how stable or unstable the processing time is.
+    for sake of accuracy we are going to assume that the delta time is ALWAYS equal to tick interval as it should be.
+    
+    
+
+
+    Issue 0002 - Calculating drag coefficient
+    
+    ACF Bullet simulation doesn't only simulate gravity but also aerodynamics, however, the way it's done isn't exactly
+    good for this E2, on creation every bullet has a variable called DragCoef assigned to it together with few other variables.
+    
+    Our problem lays within how the value of this variable is calculated, the code looks at the frontal area of the bullet
+    and divides it by ten thousand, the result of that math operation is then divided again by the bullet's mass, so what's wrong?
+    
+    Well the value of ten thousand is hardcoded into the bullet code and is specific for that bullet and it's code only, for example
+    APHE shells have this value set to ten thousand but APDS shells have it set to twenty thousand, and sadly there is no way for us to grab
+    this value, the best we can do is look at the name of the shell type being used, and look up it's frontal area divisor in a local table,
+    the drawback of this is that if ACF devs add new ammo types that have this value set to something different than ten thousand or change
+    this value for existing shells, our ballistic table will be useless as all it's values are completely wrong, the only way to fix this
+    is adding the shell's frontal area divisor into the table manually by looking at the shell's source code or guessing.
+    
+    DEVELOPER NOTE: I found out that there's a network var on the shell called "DragCoef" but I can't access it because I don't know how, help!
+    DEVELOPER NOTE 2: I just noticed that they misspelled the variable's name, it's FrAera and not FrArea lol.
+
+    Visit [https://github.com/nrlulz/ACF/blob/master/lua/acf/shared/rounds/roundap.lua#L36] for more info.
+    You can also visit [https://github.com/nrlulz/ACF/tree/master/lua/acf/shared/rounds] for a list of all official shell types.
+    
+    
+    Now to teach you a bit on how to use this, first you will need this beautiful function.
+ 
+    function vector2 getBallisticData(Distance:number)
+    {
+        local Integral = Distance / Globals["m_flIncrementDist", number]
+        local Lower = Ballistics[floor(Integral), vector2]
+        local Upper = Ballistics[ceil(Integral), vector2]
+        local Set = Lower + (Upper - Lower) * (Integral - floor(Integral))
+        
+        return Set
+    }
+    
+    now that you have this function you might be wondering on how to use it, well its simple!
+    simply get the distance from your gun's muzzle to where you are trying to shoot and pass it
+    into this function as argument, the function will return a vector2 containing velocity of the projectile
+    and bullet drop, Example code:
+    
+    local BallisticData = getBallisticData(DistanceToTarget)
+    local BulletVelocity = BallisticData:x()
+    local BulletDrop = vec(0, 0, BallisticData:y())
+]]#
+
+if (first() | dupefinished())
+{
+    #[[
+    Okay so in ACF source code sv_gravity:GetInt() is used to get the force of gravity, however
+    Expression2's convarnum() function might be returning results of GetFloat() or GetDouble().
+
+    What I'm trying to say here is that this will work as long as you are not playing on autistic server
+    where for whatever reason the server operator decided to set Gravity to something like 600.99876464.
+    ]]#
+
+    IsGenerating = 0
+    HasBallisticTable = 0
+    HighestHoloIndex = 0
+    UNITS_TO_METERS = 39.37
+
+    #[[
+    Okay so here it is, as stated in Issue 0002, this table contains all frontal area divisors
+    that I could find, it contains even some extra ammo types that I found on ACF servers.
+    
+    TODO: This is so fucking disgusting I hope I'm never gonna have to write E2 for ACF again.
+    ]]#
+    FrontalAreaDivisors = table()
+    FrontalAreaDivisors["APDS", number]     = 20000
+    FrontalAreaDivisors["APFSDS", number]   = 60000
+
+    local Caliber = Gun:acfCaliber()
+    local ProjectileMass = Gun:acfProjectileMass()
+    # I unfortunately couldn't find how Data.FrAera is calculated so I yeeted this from old E2 my friend gave me. #
+    local FrontalArea = (3.1416 * (Caliber / 20) ^ 2)
+    # Absolutely disgusting ternary operation #
+    local FrontalAreaDivisor = FrontalAreaDivisors[Gun:acfAmmoType():upper(), number] ? FrontalAreaDivisors[Gun:acfAmmoType():upper(), number] : 10000
+
+    Globals = table()
+    Globals["m_vecGravity", vector] = vec(0, 0, gravity() * -1) # gravity() returns 600 despite sv_gravity being 800, please fix. #
+    Globals["m_flTickInterval", number] = tickInterval()
+    Globals["m_flACFDragDivisor", number] = acfDragDiv()
+    Globals["m_flACFVelocityScale", number] = 1 # Haha another hardcoded ACF number with no e2 accessor func, gg # 
+    Globals["m_flIncrementDist", number] = Gun:acfMuzzleVel() * UNITS_TO_METERS * tickInterval()
+
+    Bullet = table()
+    Bullet["m_vecOrigin", vector] = vec(0, 0, 0)
+    Bullet["m_vecVelocity", vector] = vec(0, 1, 0) * Gun:acfMuzzleVel() * UNITS_TO_METERS
+    Bullet["m_flSimulationTime", number] = 0
+    Bullet["m_flProjectileMass", number] = ProjectileMass
+    Bullet["m_flDragCoefficient", number] = (FrontalArea / FrontalAreaDivisor) / ProjectileMass
+
+    function void debugHolo(Pos:vector, Model:string, Size:number, Color:vector4)
+    {
+        holoCreate(HighestHoloIndex, Pos, vec(Size, Size, Size), ang(0, 0, 0), Color, Model)
+        holoDisableShading(HighestHoloIndex, 1)
+        HighestHoloIndex++
+    }
+
+    function void beginGeneration()
+    {
+        IsGenerating = 1
+        HasBallisticTable = 0
+    }
+
+    function void finishGeneration()
+    {
+        IsGenerating = 0
+        HasBallisticTable = 1
+    }
+
+    function void progressGeneration()
+    {
+        local Origin = Bullet["m_vecOrigin", vector]
+        local Velocity = Bullet["m_vecVelocity", vector]
+        local VelocitySqr = Velocity:length2()
+        local Drag = Velocity:normalized() * (Bullet["m_flDragCoefficient", number] * VelocitySqr) / Globals["m_flACFDragDivisor", normal]
+
+        if (Origin:setZ(0):length() > Globals["m_flIncrementDist", number] * Ballistics:count())
+        {
+            Ballistics:pushVector2(vec2(Velocity:length(), Origin:z() * -1))
+            #debugHolo(Gun:attachmentPos("muzzle") + Origin, "models/holograms/cube.mdl", 1, vec4(0, 0, 255, 127))   
+        }
+
+        if (vec(0, 1, 0):dot(Velocity:normalized()) <= 0.9)
+        {
+            finishGeneration()   
+        }
+        
+        Bullet["m_vecOrigin", vector] = Origin + Velocity * Globals["m_flTickInterval", number]
+        Bullet["m_vecVelocity", vector] = Velocity + (Globals["m_vecGravity", vector] - Drag) * Globals["m_flTickInterval", number]
+    }
+
+    runOnTick(1)
+}
+
+if (tickClk())
+{
+    if (!IsGenerating & !HasBallisticTable)
+    {
+        IsGenerating = 1
+    }
+    elseif (IsGenerating)
+    {
+        while (perf() & holoCanCreate())
+        {
+            progressGeneration()
+        }
+    }
+}

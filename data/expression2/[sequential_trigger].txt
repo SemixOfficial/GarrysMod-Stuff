@@ -1,0 +1,37 @@
+@name [Sequential Trigger]
+@inputs [Guns]:array [Fire]:number
+@persist [Delay, Index, Time]:normal [Links]:array
+
+if ((first() | dupefinished()) & Guns:count() != 0)
+{
+    Delay = 60 / (Guns[1, entity]:acfFireRate() * Guns:count())
+    Index = 1
+    Time = 0
+    Links = array()
+    for (I = 1, Guns:count())
+    {
+        Links[I, wirelink] = Guns[I, entity]:wirelink()
+    }
+
+    runOnTick(1)
+}
+
+if (tickClk() & Fire)
+{
+    for (I = 1, Links:count())
+    {
+        Links[I, wirelink]["Fire", normal] = 0   
+    }
+
+    if (curtime() > Time)
+    {
+        Time = curtime() + Delay
+        Links[Index, wirelink]["Fire", normal] = 1
+        Index++
+
+        if (Index > Links:count())
+        {
+           Index = 1   
+        }
+    }
+}
