@@ -18,6 +18,7 @@ if ((first() | dupefinished()) & Guns:count() != 0)
 
 if (tickClk() & Fire)
 {
+    #TODO: This is bad.
     for (I = 1, Links:count())
     {
         Links[I, wirelink]["Fire", normal] = 0   
