@@ -1,14 +1,18 @@
 @name [Ballistic Table Generator]
 @inputs [Gun]:entity
 @outputs [Ballistics]:table [IsGenerating, HasBallisticTable]:number
-@persist [HighestHoloIndex, ACF_DragDivisor]:normal [Globals, Bullet]:table
+@persist [HighestHoloIndex]:number [Settings, Globals, Bullet]:table
 
 #[[
     Hello, my name is BlacK and you are reading the source code of my autistic ballistic table generator,
     before I go any further I would like to elaborate on few things, issues, why they exist, and laslty
     what we can possibly do about them.
     
-    
+    # TODO:
+        1 - Multi-ammo support?
+        2 - Instead of outputting velocity and bulletdrop, output simulationtime, this will make implementing leading code into aiming chips easier.
+        3 - Get rid of the currently used retarded naming scheme to clean up the code, seriously who makes a table called "FrontalAreaDivisors", what the hell does it mean anyways?
+        4 - Export getBallisticData function to other chips and make it easily accesible so ppl don't have to copypaste it across multiple chips.
     
     Issue 0001 - The ACF bullet simulation 
     
@@ -26,7 +30,6 @@
     is that if the server fails to process the tick in time or simply processes it in different way the bullet trajectory
     will change, the magnitude of this change then depends on how stable or unstable the processing time is.
     for sake of accuracy we are going to assume that the delta time is ALWAYS equal to tick interval as it should be.
-    
     
 
 
@@ -57,13 +60,21 @@
     To add it simply copy and paste it into your FCS/Turret aiming chip, to be specific
     paste it into if (first() | dupefinished()) statement, you will also want to add input to your chip
     you can call this inupt anything you desire, I called mine Ballistics, keep in mind that if you do
-    choose a different name, you will have to edit this function otherwise it won't work.
+    choose a different name, you will have to edit this function otherwise it won't work, you will
+    also need Globals["m_flIncrementDist", number] in your E2, how you define it is up to you, just make sure
+    it's value is same across both ballistic table generator and your E2.
  
     function vector2 getBallisticData(Distance:number)
     {
         local Integral = Distance / Globals["m_flIncrementDist", number]
         local Lower = Ballistics[floor(Integral), vector2]
         local Upper = Ballistics[ceil(Integral), vector2]
+        
+        if (!Lower | !Upper)
+        {
+            return vec2(0, 0)   
+        }
+        
         local Set = Lower + (Upper - Lower) * (Integral - floor(Integral))
         
         return Set
@@ -83,38 +94,23 @@
     I just thought it'd be cool to share something that people around me have wanted for a while.
 ]]#
 
-# This line of code is straight up disgusting... #
-if ((first() | dupefinished() | ->Gun | changed(Gun:acfMuzzleVel()) & Gun:acfMuzzleVel() != 0) & Gun:isValid() & Gun:acfIsGun())
+if (first())
 {
+    Settings = table()
+    # Finish generation of ballistic table after simulating this many seconds of flight #
+    Settings["Table generation timeout", number] = 3
+    # Stabilizes the expression during table generation around this many % of the server's current hardquota, smaller numbers will cause less lag but will slow down the table generation. #
+    Settings["Table generation maxperf", number] = 100
+    # Deprecated, does nothing. #
+    Settings["Table generation maxelevation", number] = 0.9
+
     IsGenerating = 0
     HasBallisticTable = 0
-    HighestHoloIndex = 0
-    UNITS_TO_METERS = 39.37
     FrontalAreaDivisors = table()
-    FrontalAreaDivisors["APDS", number]     = 20000
-    FrontalAreaDivisors["APFSDS", number]   = 60000
+    FrontalAreaDivisors["apds", number]     = 20000
+    FrontalAreaDivisors["apfsds", number]   = 60000
 
-    local Caliber = Gun:acfCaliber()
-    local ProjectileMass = Gun:acfProjectileMass()
-    # I unfortunately couldn't find how Data.FrAera is calculated so I yeeted this from old E2 my friend gave me. #
-    local FrontalArea = (3.1416 * (Caliber / 20) ^ 2)
-    # Absolutely disgusting ternary operation #
-    local FrontalAreaDivisor = FrontalAreaDivisors[Gun:acfAmmoType():upper(), number] ? FrontalAreaDivisors[Gun:acfAmmoType():upper(), number] : 10000
-
-    Globals = table()
-    Globals["m_vecGravity", vector] = vec(0, 0, gravity() * -1) # gravity() returns 600 despite sv_gravity being 800, please fix. #
-    Globals["m_flTickInterval", number] = tickInterval()
-    Globals["m_flACFDragDivisor", number] = acfDragDiv()
-    Globals["m_flACFVelocityScale", number] = 1 # Haha another hardcoded ACF number with no e2 accessor func, gg # 
-    Globals["m_flIncrementDist", number] = Gun:acfMuzzleVel() * UNITS_TO_METERS * tickInterval()
-
-    Bullet = table()
-    Bullet["m_vecOrigin", vector] = vec(0, 0, 0)
-    Bullet["m_vecVelocity", vector] = vec(0, 1, 0) * Gun:acfMuzzleVel() * UNITS_TO_METERS
-    Bullet["m_flSimulationTime", number] = 0
-    Bullet["m_flProjectileMass", number] = ProjectileMass
-    Bullet["m_flDragCoefficient", number] = (FrontalArea / FrontalAreaDivisor) / ProjectileMass
-
+    HighestHoloIndex = 1
     function void debugHolo(Pos:vector, Model:string, Size:number, Color:vector4)
     {
         holoCreate(HighestHoloIndex, Pos, vec(Size, Size, Size), ang(0, 0, 0), Color, Model)
@@ -122,57 +118,127 @@ if ((first() | dupefinished() | ->Gun | changed(Gun:acfMuzzleVel()) & Gun:acfMuz
         HighestHoloIndex++
     }
 
+    function number timeToTicks(Time:number)
+    {
+        return floor(0.5 + (Time / tickInterval()))
+    }
+
+    function number ticksToTime(Ticks:number)
+    {
+        return tickInterval() * Ticks
+    }
+
+    function number roundToTicks(Time:number)
+    {
+        return tickInterval() * timeToTicks(Time)
+    }
+
+    function number unitsToMeters(Units:number)
+    {
+        return Units / 39.37   
+    }
+
+    function number metersToUnits(Meters:number)
+    {
+        return Meters * 39.37   
+    }
+
+    Globals = table()
+    Bullet = table()
+
+    Globals["m_vecGravity", vector]         = vec(0, 0, gravity() * -1) # gravity() returns 600 despite sv_gravity being 800, please fix. #
+    Globals["m_flTickInterval", number]     = tickInterval()
+    Globals["m_flACFDragDivisor", number]   = acfDragDiv()
+    Globals["m_flACFVelocityScale", number] = 1 # Haha another hardcoded ACF number with no e2 accessor func, gg # 
+    Globals["m_flIncrementDist", number]    = metersToUnits(Gun:acfMuzzleVel() * Globals["m_flTickInterval", number])
+
     function void beginGeneration()
     {
+        #print("beginGeneration()")
         IsGenerating = 1
         HasBallisticTable = 0
         Ballistics:clear()
+        holoDeleteAll(1)
+
+        local Caliber = Gun:acfCaliber()
+        local AmmoType = Gun:acfAmmoType():lower()
+        local MuzzleVel = Gun:acfMuzzleVel()
+        local ProjectileMass = Gun:acfProjectileMass()
+        local FrontalArea = (3.1416 * (Caliber / 20) ^ 2) # I unfortunately couldn't find how Data.FrAera is calculated so I yeeted this from old E2 my friend gave me. #
+        local FrontalAreaDivisor = FrontalAreaDivisors[AmmoType, number] ? FrontalAreaDivisors[AmmoType, number] : 10000 # Absolutely disgusting ternary operation #
+
+        Bullet["m_vecOrigin", vector] = vec(0, 0, 0)
+        Bullet["m_vecVelocity", vector] = vec(0, 1, 0) * metersToUnits(MuzzleVel)
+        Bullet["m_flSimulationTime", number] = 0
+        Bullet["m_flProjectileMass", number] = ProjectileMass
+        Bullet["m_flMuzzleVelocity", number] = MuzzleVel
+        Bullet["m_flDragCoefficient", number] = (FrontalArea / FrontalAreaDivisor) / ProjectileMass
+        
+        # Don't forget to update this global too! #
+        Globals["m_flIncrementDist", number] = metersToUnits(MuzzleVel * Globals["m_flTickInterval", number])
     }
 
     function void finishGeneration()
     {
+        #print("finishGeneration()", Ballistics:count())
         IsGenerating = 0
         HasBallisticTable = 1
-        runOnTick(0)
     }
 
-    function void progressGeneration()
+    function number progressGeneration()
     {
         local Origin = Bullet["m_vecOrigin", vector]
         local Velocity = Bullet["m_vecVelocity", vector]
         local VelocitySqr = Velocity:length2()
         local Drag = Velocity:normalized() * (Bullet["m_flDragCoefficient", number] * VelocitySqr) / Globals["m_flACFDragDivisor", normal]
 
-        if (Origin:setZ(0):length() > Globals["m_flIncrementDist", number] * Ballistics:count())
+        if (Origin:setZ(0):length() >= Globals["m_flIncrementDist", number] * Ballistics:count())
         {
             Ballistics:pushVector2(vec2(Velocity:length(), Origin:z() * -1))
             #debugHolo(Gun:attachmentPos("muzzle") + Origin, "models/holograms/cube.mdl", 1, vec4(0, 0, 255, 127))   
         }
 
         # TODO: This is bad, at least pre-cache the vector!
-        if (vec(0, 1, 0):dot(Velocity:normalized()) <= 0.9)
+        #vec(0, 1, 0):dot(Velocity:normalized()) <= 0.5
+        if (Bullet["m_flSimulationTime", number] > Settings["Table generation timeout", number])
         {
-            finishGeneration()   
+            finishGeneration()
+            return 0
         }
         
         Bullet["m_vecOrigin", vector] = Origin + Velocity * Globals["m_flTickInterval", number]
         Bullet["m_vecVelocity", vector] = Velocity + (Globals["m_vecGravity", vector] - Drag) * Globals["m_flTickInterval", number]
+        Bullet["m_flSimulationTime", number] = Bullet["m_flSimulationTime", number] + Globals["m_flTickInterval", number]
+        return 1
     }
 
     runOnTick(1)
 }
-
-if (tickClk())
+elseif (dupefinished() & Gun:isValid())
 {
-    if (!IsGenerating & !HasBallisticTable)
+    reset()
+}
+
+if (Gun:isValid() & Gun:acfMuzzleVel() != 0)
+{
+    local RestartGeneration = 0
+    if (Gun:acfMuzzleVel() != Bullet["m_flMuzzleVelocity", number])
+    {
+        RestartGeneration = 1   
+    }
+
+    if (!IsGenerating & !HasBallisticTable | RestartGeneration)
     {
         beginGeneration()
     }
     elseif (IsGenerating)
     {
-        while (perf() & holoCanCreate())
+        while (perf(Settings["Table generation maxperf", number]) & holoCanCreate())
         {
-            progressGeneration()
+            if (!progressGeneration())
+            {
+                break   
+            }
         }
     }
 }
