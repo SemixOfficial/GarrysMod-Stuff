@@ -1,7 +1,7 @@
 @name [Ballistic Table Generator]
 @inputs [Gun]:entity
 @outputs [Ballistics]:table [IsGenerating, HasBallisticTable]:number
-@persist [HighestHoloIndex]:number [Settings, Globals, Bullet]:table
+@persist [HighestHoloIndex]:number [Settings, Globals, Bullet, FrontalAreaDivisors]:table
 
 #[[
     Hello, my name is BlacK and you are reading the source code of my autistic ballistic table generator,
@@ -98,7 +98,7 @@ if (first())
 {
     Settings = table()
     # Finish generation of ballistic table after simulating this many seconds of flight #
-    Settings["Table generation timeout", number] = 3
+    Settings["Table generation timeout", number] = 10
     # Stabilizes the expression during table generation around this many % of the server's current hardquota, smaller numbers will cause less lag but will slow down the table generation. #
     Settings["Table generation maxperf", number] = 100
     # Deprecated, does nothing. #
@@ -164,7 +164,7 @@ if (first())
         local AmmoType = Gun:acfAmmoType():lower()
         local MuzzleVel = Gun:acfMuzzleVel()
         local ProjectileMass = Gun:acfProjectileMass()
-        local FrontalArea = (3.1416 * (Caliber / 20) ^ 2) # I unfortunately couldn't find how Data.FrAera is calculated so I yeeted this from old E2 my friend gave me. #
+        local FrontalArea = (3.1416 * ((Caliber / 10) * 0.5) ^ 2) # I unfortunately couldn't find how Data.FrAera is calculated so I yeeted this from old E2 my friend gave me. #
         local FrontalAreaDivisor = FrontalAreaDivisors[AmmoType, number] ? FrontalAreaDivisors[AmmoType, number] : 10000 # Absolutely disgusting ternary operation #
 
         Bullet["m_vecOrigin", vector] = vec(0, 0, 0)
