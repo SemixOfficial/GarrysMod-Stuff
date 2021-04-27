@@ -1,0 +1,116 @@
+@name [Vortex Series] - Lighting I Tank ECU
+@inputs [Pod, Engine, Gearbox, TransferCaseCenter, TransferCaseLeft, TransferCaseRight]:wirelink
+@outputs 
+@persist [Settings, Globals, PID]:table
+#@author BlacK [https://steamcommunity.com/profiles/76561197962184163]
+
+if (first() | dupefinished())
+{
+    Settings = table()
+    Settings["Engine Standby Time", number] = 0.5 # In-development
+    Settings["Gearbox Brake Power", number] = 15 # Max brake power to apply.
+    Settings["Gearbox Steering Turn Time", number] = 0.5 # How long does steer signal have to be active for until max turn rate is reached.
+    Settings["Gearbox Steering Sensitivity", number] = 1.25 # Fraction of brake power to apply at maximum turn.
+
+    Globals = table()
+    Globals["m_flSteerFraction", number] = 0
+    Globals["m_iRegulatorGear", number] = 1
+
+    PID = table()
+    PID["Engine", table] = table()
+    PID["Clutch", table] = table()
+    PID["Regulator", table] = table()
+
+    # Name, Error, Min value, Max Value, Proportional gain, Integral gain, Derivative gain
+    function void updatePID(Name:string, Error:number, Min:number, Max:number, Pg:number, Ig:number, Dg:number)
+    {
+        local DeltaTime = tickInterval()
+
+        PID[Name, table]["Proportional", number] = Error
+        PID[Name, table]["Integral", number] = clamp(PID[Name, table]["Integral", number] + (Error * Ig * DeltaTime), Min, Max)
+        PID[Name, table]["Derivative", number] = Error - PID[Name, table]["Previous Error", number]
+        PID[Name, table]["Output", number] = clamp(Pg * PID[Name, table]["Proportional", number] + PID[Name, table]["Integral", number] + Dg * PID[Name, table]["Derivative", number], Min, Max)
+        PID[Name, table]["Previous Error", number] = Error
+    }
+
+    function void engineLogic()
+    {
+        Engine["Active", normal] = Pod["Active", normal]
+
+        local ForwardMove = Pod["W", normal] - Pod["S", normal]
+        local SideMove = Pod["A", normal] - Pod["D", normal]
+        local EngineEnt = Engine:entity()
+        local TargetRPM = EngineEnt:acfIdleRPM()
+
+        if (ForwardMove != 0 | SideMove != 0)
+        {
+            TargetRPM = EngineEnt:acfRedline()
+        }
+        #elseif (0)
+        #{
+            #TargetRPM = (EngineEnt:acfPowerbandMin() + EngineEnt:acfPowerbandMax()) * 0.5
+        #}
+
+        updatePID("Engine", TargetRPM - EngineEnt:acfRPM(), 0, 100, 0, 0.015, 0)
+
+        Engine["Throttle", number] = PID["Engine", table]["Output", number]
+    }
+
+    function void gearboxLogic()
+    {
+        local EngineEnt = Engine:entity()
+        local EngineRPM = EngineEnt:acfRPM()
+        local TurnRate = (1 / Settings["Gearbox Steering Turn Time", number]) * tickInterval()
+        Globals["m_flSteerFraction", normal] = clamp(Globals["m_flSteerFraction", normal] + ((Pod["A", normal] | Pod["D", normal]) ? TurnRate : -TurnRate), 0, 1)
+
+        updatePID("Clutch", EngineEnt:acfPowerbandMin() - EngineRPM, 0, 1, 0, 0.001, 0.001)
+
+        Clutch = max(PID["Clutch", table]["Output", number], 1 - (Pod["W", normal] | Pod["A", normal] | Pod["S", normal] | Pod["D", normal] | Pod["Space", normal]))
+        Gearbox["Clutch", number] = Clutch
+        
+        if (Pod["Space", normal])
+        {
+            TransferCaseLeft["Left Clutch", number] = 1
+            TransferCaseRight["Left Clutch", number] = 1
+            TransferCaseLeft["Left Brake", number] = Settings["Gearbox Brake Power", number]
+            TransferCaseRight["Left Brake", number] = Settings["Gearbox Brake Power", number]
+            return
+        }
+
+        updatePID("Regulator", ((EngineEnt:acfPowerbandMin() + EngineEnt:acfPowerbandMax()) * 0.5) - EngineEnt:acfRPM(), 0, 1, 0, 0.015, 0)
+        TransferCaseCenter["Gear", number] = 1 + (1 - floor(PID["Regulator", table]["Output", number]))
+
+        #[
+        if (Globals["m_iRegulatorGear", number] == 2 & EngineRPM <= EngineEnt:acfPowerbandMin())
+        {
+            Globals["m_iRegulatorGear", number] = 1
+        }
+        elseif (Globals["m_iRegulatorGear", number] == 1 & EngineRPM >= EngineEnt:acfPowerbandMax())
+        {
+            Globals["m_iRegulatorGear", number] = 2
+        }
+        TransferCaseCenter["Gear", number] = Globals["m_iRegulatorGear", number]
+        ]#
+
+        TransferCaseLeft["Gear", number] = 1
+        TransferCaseRight["Gear", number] = 1
+        if (Pod["S", normal] & !Pod["W", normal])
+        {
+            TransferCaseLeft["Gear", number] = 2
+            TransferCaseRight["Gear", number] = 2
+        }
+
+        TransferCaseLeft["Left Clutch", number] = max(Pod["D", normal] - Pod["A", normal], 0)
+        TransferCaseRight["Left Clutch", normal] = max(Pod["A", normal] - Pod["D", normal], 0)
+        TransferCaseLeft["Left Brake", number] = (Pod["D", normal] - Pod["A", normal]) * Settings["Gearbox Steering Sensitivity", number] * Settings["Gearbox Brake Power", number] * Globals["m_flSteerFraction", normal]
+        TransferCaseRight["Left Brake", number] = (Pod["A", normal] - Pod["D", normal]) * Settings["Gearbox Steering Sensitivity", number] * Settings["Gearbox Brake Power", number] * Globals["m_flSteerFraction", normal]
+    }
+
+    runOnTick(1)
+}
+
+if (tickClk())
+{
+    engineLogic()
+    gearboxLogic()
+}
