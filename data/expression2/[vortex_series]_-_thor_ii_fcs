@@ -1,0 +1,241 @@
+@name [Vortex Series] - Thor II FCS
+@inputs [Active]:normal [Base, Seat, Gun, Handle]:entity [Pod, Cam, HUD]:wirelink [Ballistics]:table [TraceFilter]:array
+@outputs 
+@persist [Settings, Globals]:table [Pivot]:entity
+#@author BlacK [https://steamcommunity.com/profiles/76561197962184163]
+
+if (first() | dupefinished())
+{
+    Settings = table()
+    Settings["Turret Max Elevation", normal] = 65  # The amount a tank can raise it's barrel, in degrees.
+    Settings["Turret Max Depression", normal] = 20 # The amount a tank can lower it's barrel, in degrees.
+    Settings["Turret Max Azimuth", normal] = 90 # The amount a tank can rotate it's barrel horizontaly, in degrees.
+    Settings["Turret Vertical Rotation Speed", normal] = 150 # deg/s
+    Settings["Turret Horizontal Rotation Speed", normal] = 150 # deg/s
+    Settings["Aerial Defense Mode Crosshair Smoothing", number] = 0.05 # uhh no idea, higher values = less smooth
+    Settings["Zoom Levels", table] = table(0, 50, 25, 15, 5) # degrees of fov per zoom level
+
+    Globals = table()
+    Globals["m_iCurrentZoomLevel", number] = 1
+    Globals["m_bAAModeEnabled", normal] = 1
+    Globals["m_angAAModeAimAngles", angle] = ang(0, 0, 0)
+    Globals["m_angAAModeLastAimAngles", angle] = ang(0, 0, 0)
+    Globals["m_angAAModeLastAimAngleDifference", angle] = ang(0, 0, 0)
+
+    holoCreate(0, vec(0, 0, 0), vec(0, 0, 0), ang(0, 0, 0), vec4(0, 0, 0, 0), "models/holograms/hq_cube.mdl")
+
+    function number timeToTicks(Time:number)
+    {
+        return floor(0.5 + (Time / tickInterval()))
+    }
+
+    function number ticksToTime(Ticks:number)
+    {
+        return tickInterval() * Ticks
+    }
+
+    function number roundToTicks(Time:number)
+    {
+        return tickInterval() * timeToTicks(Time)
+    }
+
+    function number unitsToMeters(Units:number)
+    {
+        return Units / 39.37   
+    }
+
+    function number metersToUnits(Meters:number)
+    {
+        return Meters * 39.37   
+    }
+
+    function number normalizeAngle(Angle:number)
+    {
+        return (Angle + 180) % 360 - 180
+    }
+
+    function angle normalizeAngles(Angles:angle)
+    {
+        return ang(
+            normalizeAngle(Angles:pitch()),
+            normalizeAngle(Angles:yaw()),
+            normalizeAngle(Angles:roll()))
+    }
+
+    function angle clampAngles(Angles:angle, Min:angle, Max:angle)
+    {
+        return ang(
+            clamp(Angles:pitch(), Min:pitch(), Max:pitch()),
+            clamp(Angles:yaw(), Min:yaw(), Max:yaw()),
+            clamp(Angles:roll(), Min:roll(), Max:roll()))
+    }
+
+    function vector2 getBallisticData(Distance:number)
+    {
+        local Integral = Distance / metersToUnits(Gun:acfMuzzleVel() * tickInterval())
+        local Lower = Ballistics[floor(Integral), vector2]
+        local Upper = Ballistics[ceil(Integral), vector2]
+
+        if (!Lower | !Upper)
+        {
+            return vec2(0, 0)   
+        }
+
+        local Set = Lower + (Upper - Lower) * (Integral - floor(Integral))
+        return Set
+    }
+
+    function void cameraThink()
+    {
+        Cam["Activated", normal] = Pod["Active", normal]
+
+        if (changed(Pod["Mouse2", normal]) & Pod["Mouse2", normal])
+        {
+            local ZoomLevel = Globals["m_iCurrentZoomLevel", number] + 1
+            if (ZoomLevel > Settings["Zoom Levels", table]:count())
+            {
+                ZoomLevel = 1   
+            }
+
+            local NewFoV = Settings["Zoom Levels", table][ZoomLevel, number]
+            Cam["FOV", number] = NewFoV
+            Globals["m_iCurrentZoomLevel", number] = ZoomLevel
+            Seat:hintDriver(format("Field-of-View: %i degrees (%0.1fx Magnification)", NewFoV, NewFoV > 0 ? 90 / NewFoV : 1), 2.5)
+            Seat:soundPlay("Zoom", 0, "weapons/zoom.wav")
+        }
+    }
+
+    function void weaponThink()
+    {
+        if (!Gun:isValid())
+        {
+            return
+        }
+
+        if (!Pivot:isValid())
+        {
+            if (!holoCanCreate())
+            {
+                return
+            }
+
+            Pivot = holoCreate(1, Base:pos(), vec(0, 0, 0), Gun:angles(), vec4(0, 0, 0, 0), "models/holograms/cube.mdl")
+            if (!Pivot:isValid())
+            {
+                return
+            }
+            
+            holoParent(1, Base)
+            holoDisableShading(1, 1)
+            holoShadow(1, 0)
+        }
+
+        if (!Handle:isFrozen())
+        {
+            Handle:propFreeze(1)
+        }
+
+        local DeltaTime = tickInterval()
+        local GunToTarget = Pivot:angles()
+        if (Pod["Active", normal])
+        {
+            local ShootPos = Gun:attachmentPos("muzzle")
+    
+            Globals["m_angAAModeAimAngles", angle] = slerp(quat(Globals["m_angAAModeAimAngles", angle]), quat(Cam["CamAng", angle]), Settings["Aerial Defense Mode Crosshair Smoothing", number]):toAngle()
+    
+            rangerPersist(0)
+            rangerHitWater(0)
+            rangerHitEntities(1)
+            rangerDefaultZero(0)
+            rangerFilter(TraceFilter)
+            local Trace = rangerOffsetHull(1024 ^ 2, Cam["CamPos", vector], Globals["m_angAAModeAimAngles", angle]:forward(), vec(-12, -12, -12), vec(12, 12, 12))
+            holoPos(0, Trace:position())
+
+            if (Ballistics:count() != 0)
+            {
+
+                local TargetPos = Trace:position()
+                local DistToTarget = (TargetPos - ShootPos):length()
+                local BallisticData = getBallisticData(DistToTarget)
+                TargetPos += vec(0, 0, BallisticData:y())
+                
+                if (Globals["m_bAAModeEnabled", normal])
+                {
+                    local TravelTime = 0
+                    if (BallisticData:x() != 0)
+                    {
+                        TravelTime = roundToTicks(DistToTarget / BallisticData:x()) #+ DeltaTime                    
+                    }
+
+                    local PredictionTicks = timeToTicks(TravelTime * 0.5)
+                    local AngleDifference = normalizeAngles(Globals["m_angAAModeAimAngles", angle] - Globals["m_angAAModeLastAimAngles", angle]) / DeltaTime
+                    local AngleAcceleration = AngleDifference - Globals["m_angAAModeLastAimAngleDifference", angle]
+
+                    Globals["m_angAAModeLastAimAngles", angle] = Globals["m_angAAModeAimAngles", angle]
+                    Globals["m_angAAModeLastAimAngleDifference", angle] = AngleDifference
+
+                    GunToTarget = (TargetPos - Gun:pos()):normalized():toAngle()
+
+                    DeltaTimex2 = DeltaTime * 2
+                    while (PredictionTicks > 0 & perf())
+                    {
+                        GunToTarget += AngleDifference * DeltaTimex2
+                        AngleDifference += AngleAcceleration * DeltaTimex2
+                        PredictionTicks--   
+                    }
+                    
+                    GunToTarget = normalizeAngles(GunToTarget)
+                }
+            }
+            else
+            {
+                GunToTarget = (Cam["HitPos", vector] - Gun:pos()):normalized():toAngle()     
+            }
+        }
+
+        local MaxRotation = ang(Settings["Turret Vertical Rotation Speed", normal], Settings["Turret Horizontal Rotation Speed", normal], 0) * DeltaTime
+        local TargetAngles = Pivot:toWorld(clampAngles(Pivot:toLocal(GunToTarget), ang(Settings["Turret Max Elevation", normal], Settings["Turret Max Azimuth", normal], 0) * -1, ang(Settings["Turret Max Depression", normal], Settings["Turret Max Azimuth", normal], 0)))
+        local RotationAmt = clampAngles(normalizeAngles(TargetAngles - Handle:angles()), -MaxRotation, MaxRotation)
+
+        Handle:setAng(normalizeAngles(Handle:angles() + RotationAmt))
+        #Gun:acfFire(Handle:forward():dot(normalizeAngles(TargetAngles):forward()) > 0.99 ? Pod["Mouse1", normal] : 0)
+    }
+
+    Cam["Parent", entity] = Base
+    Cam["Position", vector] = vec(0, 0, 120)
+    Cam["Distance", number] = 160
+
+    runOnTick(1)
+}
+elseif (tickClk())
+{
+    cameraThink()
+    weaponThink() 
+}
+elseif (Active & ~Active)
+{
+    local ScrW = egpScrW(Seat:driver())
+    local ScrH = egpScrH(Seat:driver())
+
+    HUD:egpClear()
+    HUD:egpDrawTopLeft(1)
+
+    local I = 1
+    HUD:egp3DTracker(I, vec(0, 0, 0))
+    HUD:egpParent(I, holoEntity(0))
+    I++
+
+    HUD:egpCircleOutline(I, vec2(0, 0), vec2(10, 10))
+    HUD:egpColor(I, vec4(55, 205, 55, 255))
+    HUD:egpParent(I, 1)
+    I++
+
+    HUD:egpCircle(I, vec2(0, 0), vec2(3, 3))
+    HUD:egpColor(I, vec4(55, 205, 55, 255))
+    HUD:egpParent(I, 1)
+    I++
+
+    HUD:egpCircleOutline(I, vec2(ScrW, ScrH) * 0.5, vec2(20, 20))
+    HUD:egpColor(I, vec4(55, 205, 55, 205))
+    I++
+}
