@@ -1,5 +1,5 @@
 @name [Vortex Series] - Lighting I Tank ECU
-@inputs [Pod, Engine, Gearbox, TransferCaseCenter, TransferCaseLeft, TransferCaseRight]:wirelink
+@inputs [Pod, Engine, Gearbox, TransferCaseCenter, TransferCaseLeft, TransferCaseRight]:wirelink [Base]:entity
 @outputs 
 @persist [Settings, Globals, PID]:table
 #@author BlacK [https://steamcommunity.com/profiles/76561197962184163]
@@ -7,14 +7,16 @@
 if (first() | dupefinished())
 {
     Settings = table()
-    Settings["Engine Standby Time", number] = 0.5 # In-development
+    Settings["Engine Standby Time", number] = 10 # In-development
     Settings["Gearbox Brake Power", number] = 15 # Max brake power to apply.
+    Settings["Gearbox Regenerative Steering Cutoff", number] = 1 # Chip will only allow regenerative steering if the current speed is smaller than this. (in m/s)
     Settings["Gearbox Steering Turn Time", number] = 0.5 # How long does steer signal have to be active for until max turn rate is reached.
     Settings["Gearbox Steering Sensitivity", number] = 1.25 # Fraction of brake power to apply at maximum turn.
 
     Globals = table()
     Globals["m_flSteerFraction", number] = 0
     Globals["m_iRegulatorGear", number] = 1
+    Globals["m_flEngineIdleTime", number] = 0
 
     PID = table()
     PID["Engine", table] = table()
@@ -45,11 +47,12 @@ if (first() | dupefinished())
         if (ForwardMove != 0 | SideMove != 0)
         {
             TargetRPM = EngineEnt:acfRedline()
+            Globals["m_flEngineIdleTime", number] = curtime() + Settings["Engine Standby Time", number]
         }
-        #elseif (0)
-        #{
-            #TargetRPM = (EngineEnt:acfPowerbandMin() + EngineEnt:acfPowerbandMax()) * 0.5
-        #}
+        elseif (Globals["m_flEngineIdleTime", number] > curtime())
+        {
+            TargetRPM = (EngineEnt:acfPowerbandMin() + EngineEnt:acfPowerbandMax()) * 0.5
+        }
 
         updatePID("Engine", TargetRPM - EngineEnt:acfRPM(), 0, 100, 0, 0.015, 0)
 
@@ -100,10 +103,24 @@ if (first() | dupefinished())
             TransferCaseRight["Gear", number] = 2
         }
 
-        TransferCaseLeft["Left Clutch", number] = max(Pod["D", normal] - Pod["A", normal], 0)
-        TransferCaseRight["Left Clutch", normal] = max(Pod["A", normal] - Pod["D", normal], 0)
-        TransferCaseLeft["Left Brake", number] = (Pod["D", normal] - Pod["A", normal]) * Settings["Gearbox Steering Sensitivity", number] * Settings["Gearbox Brake Power", number] * Globals["m_flSteerFraction", normal]
-        TransferCaseRight["Left Brake", number] = (Pod["A", normal] - Pod["D", normal]) * Settings["Gearbox Steering Sensitivity", number] * Settings["Gearbox Brake Power", number] * Globals["m_flSteerFraction", normal]
+        if (Base:velL():setZ(0):length() < (39.37 * Settings["Gearbox Regenerative Steering Cutoff", number]) & !(Pod["W", normal] | Pod["S", normal]))
+        {
+            local Steer = Pod["A", normal] - Pod["D", normal]
+
+            TransferCaseLeft["Left Clutch", number] = 0 # 1 - Globals["m_flSteerFraction", normal]
+            TransferCaseRight["Left Clutch", normal] = 0 # 1 - Globals["m_flSteerFraction", normal]
+            TransferCaseLeft["Left Brake", number] = 0
+            TransferCaseRight["Left Brake", number] = 0
+            TransferCaseLeft["Gear", number] = (Steer == 1 ? 1 : 2)
+            TransferCaseRight["Gear", number] = (Steer == -1 ? 1 : 2)
+        }
+        else
+        {
+            TransferCaseLeft["Left Clutch", number] = max(Pod["D", normal] - Pod["A", normal], 0)
+            TransferCaseRight["Left Clutch", normal] = max(Pod["A", normal] - Pod["D", normal], 0)
+            TransferCaseLeft["Left Brake", number] = (Pod["D", normal] - Pod["A", normal]) * Settings["Gearbox Steering Sensitivity", number] * Settings["Gearbox Brake Power", number] * Globals["m_flSteerFraction", normal]
+            TransferCaseRight["Left Brake", number] = (Pod["A", normal] - Pod["D", normal]) * Settings["Gearbox Steering Sensitivity", number] * Settings["Gearbox Brake Power", number] * Globals["m_flSteerFraction", normal]
+        }
     }
 
     runOnTick(1)
