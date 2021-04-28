@@ -16,15 +16,15 @@ if ((first() | dupefinished()) & Guns:count() != 0)
     runOnTick(1)
 }
 
-if (tickClk() & Fire)
+if (tickClk())
 {
     #TODO: This is bad.
     for (I = 1, Links:count())
     {
         Links[I, wirelink]["Fire", normal] = 0   
-    }
+    }   
 
-    if (curtime() > Time)
+    if (Fire & curtime() > Time)
     {
         Time = curtime() + Delay
         Links[Index, wirelink]["Fire", normal] = 1
