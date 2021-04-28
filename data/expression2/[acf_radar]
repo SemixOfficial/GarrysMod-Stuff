@@ -1,0 +1,128 @@
+@name [ACF Radar]
+@inputs [Active]:normal
+@outputs [Target]:entity [IsTracking, IsLockedOn]:normal
+@persist [Settings, Globals]:table
+@model models/radar/radar_mid.mdl
+
+if (first() | dupefinished())
+{
+    Settings = table()
+    Settings["Radar Lock-On FoV", number] = 16 # Field of view of the search cone, in degrees.
+    Settings["Radar Lock-On Distance", number] = 4096 # Max distance to search for entities in, in units.
+    Settings["Radar Lock-On Time", number] = 1 # How long the radar must track an entity before locking on, in seconds.
+    
+    Globals = table()
+    Globals["m_flTrackingStartTime", number] = 0
+    Globals["m_flTrackingFinshTime", number] = 0
+
+    findIncludeClass("acf_engine")
+    findIncludeClass("acf_missile")
+    findIncludeClass("acf_gearbox")
+    findIncludeClass("acf_ammo")
+    findIncludeClass("prop_vehicle_prisoner_pod")
+    
+    soundPlay("Tracking", 0, "acf_extra/airfx/laser_track.wav")
+    soundPlay("Locked", 0, "acf_extra/airfx/laser_lock.wav")
+    
+    soundVolume("Tracking", 0)
+    soundVolume("Locked", 0)
+
+    function entity getPhysicalParent(Entity:entity)
+    {
+        local Parent = Entity:parent()
+        if (Parent:isValid())
+        {
+            return getPhysicalParent(Entity)
+        }
+        
+        return Entity
+    }
+
+    function entity findClosestWithinCone()
+    {
+        local ClosestEntity = noentity()
+        local ClosestDot = -1.0
+        local NumberFound = findInCone(entity():pos(), entity():forward(), Settings["Radar Lock-On Distance", number], Settings["Radar Lock-On FoV", number])
+        local Entities = findToArray()
+
+        foreach (Index, Entity:entity = Entities)
+        {
+            local Target = getPhysicalParent(Entity)
+            local RadarToTarget = (Target:boxCenterW() - entity():pos()):normalized()
+            local DotToTarget = entity():forward():dot(RadarToTarget)
+
+            if (DotToTarget > ClosestDot)
+            {
+                ClosestEntity = Target
+                ClosestDot = DotToTarget                
+            }
+        }
+        
+        return ClosestEntity
+    }
+
+    function void targetingLogic()
+    {
+        local Ent = findClosestWithinCone()
+
+        if (!IsLockedOn)
+        {
+            if (Ent:isValid() & !IsTracking)
+            {
+                soundVolume("Tracking", 1)
+                Globals["m_flTrackingStartTime", number] = curtime()
+                IsTracking = 1
+            }
+            elseif (Ent:isValid() & IsTracking)
+            {
+                if ((curtime() - Globals["m_flTrackingStartTime", number]) > Settings["Radar Lock-On Time", number])
+                {
+                    Globals["m_flTrackingFinishTime", number] = curtime()
+                    soundVolume("Tracking", 0)
+                    soundVolume("Locked", 1)
+                    IsTracking = 0
+                    IsLockedOn = 1
+                    Target = Ent
+                }
+            }
+            elseif (!Ent:isValid() & IsTracking)
+            {
+                soundVolume("Tracking", 0)
+                IsTracking = 0
+            }
+        }
+        else
+        {
+            local RadarToTarget = (Ent:boxCenterW() - entity():pos())
+            local DotToTarget = entity():forward():dot(RadarToTarget:normalized())
+
+            if (DotToTarget > cos(toRad(Settings["Radar Lock-On FoV", number])) | RadarToTarget:length() > Settings["Radar Lock-On Distance", number])
+            {
+                soundVolume("Locked", 0)
+                IsLockedOn = 0
+                Target = noentity()
+            }
+            
+            if (Globals["m_flTrackingFinishTime", number] != 0 & (curtime() - Globals["m_flTrackingFinishTime", number]) > 1)
+            {
+                Globals["m_flTrackingFinishTime", number] = 0
+                soundVolume("Locked", 0)
+            }
+        }
+    }
+
+    runOnTick(1)
+}
+elseif (tickClk() & Active)
+{
+    targetingLogic()
+}
+elseif (~Active & !Active)
+{
+    IsTracking = 0
+    IsLockedOn = 0
+    Target = noentity()
+    soundVolume("Tracking", 0)
+    soundVolume("Locked", 0)
+}
+
