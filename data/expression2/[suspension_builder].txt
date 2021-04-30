@@ -1,0 +1,77 @@
+@name [Suspension Builder]
+@persist [Settings]:table [Wheels]:array
+
+if (first())
+{   
+    # YOUR CONTRAPTION MUST BE FACING NORTH FOR THIS E2 TO WORK PROPERLY!! #
+
+    Settings = table()
+    Settings["Wheel Model", string] = "models/sprops/trans/miscwheels/tank25.mdl"
+    Settings["Arm Length", number] = 75 # Length of the arm that the wheel is gonna be attached to.
+    Settings["Torsion Bar", number] = 0 # Create torsion bar suspension for tanks?
+    Settings["Create Elastics", normal] = 1
+    Settings["Elastic Constant", number] = 1
+    Settings["Elastic Damping", number] = 1
+    Settings["Debug Mode", normal] = 0
+
+    local Base = entity():isWeldedTo()
+    if (!Base:isValid())
+    {
+        selfDestruct()
+    }
+
+    findIncludeModel(Settings["Wheel Model", string])
+    findInSphere(Base:pos(), 600)
+
+    Wheels = findToArray()
+
+    foreach (Index, Wheel:entity = Wheels)
+    {
+        if (Wheel:owner() != Base:owner())
+        {
+            continue
+        }
+        
+        local Constraints = Wheel:getConstraintsTable()
+        local Continue = 0
+        foreach(Index, Constraint:table = Constraints)
+        {
+            if (Constraint["Type", string] == "Axis")
+            {
+                Continue
+                continue
+            }
+            
+            if (Constraint["Type", string] != "Rope" | Constraint["material", string] != "")
+            {
+                continue
+            }
+
+            removeConstraint(Index:toNumber())
+        }
+        
+        if (Continue)
+        {
+            continue
+        }
+        
+        local OffsetL = Wheel:toWorld(vec(Settings["Arm Length", number] * 0.5, -Settings["Arm Length", number], 0))
+        local OffsetR = Wheel:toWorld(vec(-Settings["Arm Length", number] * 0.5, -Settings["Arm Length", number], 0))
+
+        if (Settings["Torsion Bar", number])
+        {
+            local Side = vec(1, 0, 0):dot(Wheel:right())
+            OffsetL = Wheel:toWorld(vec(Settings["Arm Length", number] * Side, Settings["Arm Length", number] * 0.25, Settings["Arm Length", number] * 0.75))
+            OffsetR = Wheel:toWorld(vec(Settings["Arm Length", number] * Side, -Settings["Arm Length", number] * 0.25, Settings["Arm Length", number] * 0.75))
+        }
+
+        rope(1, Wheel, vec(0, 0, 0), Base, Base:toLocal(OffsetL), 0, Settings["Debug Mode", normal], "cable/blue", 1)
+        rope(2, Wheel, vec(0, 0, 0), Base, Base:toLocal(OffsetR), 0, Settings["Debug Mode", normal], "cable/blue", 1)
+
+        ##ifdef elasticTo()
+        #Wheel:elasticTo(1, Base, 0, 0, vec(0, 0, 0), vec(0, 0, 50), Settings["Elastic Constant", number], Settings["Elastic Damping", number], Settings["Elastic Damping", number], "cable/cable2",  Settings["Debug Mode", normal], 0)
+        ##endif
+    }
+    
+    selfDestruct()
+}
